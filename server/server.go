@@ -20,16 +20,32 @@ type DependencyCheck struct {
 	OK   bool
 }
 
+// RegisterHealthEndpoints wires /health, /ready and /live, checking the same
+// dependencies for health and readiness. Prefer RegisterHealthEndpointsWithReadiness
+// when a dependency belongs to only one of the two.
 func RegisterHealthEndpoints(mux *http.ServeMux, serviceName string, startTime time.Time, deps func() []DependencyCheck) {
+	RegisterHealthEndpointsWithReadiness(mux, serviceName, startTime, deps, deps)
+}
+
+// RegisterHealthEndpointsWithReadiness wires /health, /ready and /live with separate
+// dependency sets.
+//
+// health reports whether the process itself is in working order — the infrastructure
+// it owns, such as its broker connection. It drives container health checks, so a
+// third-party API belongs in readiness instead: an outage there would otherwise mark
+// a perfectly functional service as broken.
+//
+// readiness reports whether the service can serve traffic right now, third-party
+// dependencies included. Callers that route work should read this one.
+//
+// /live answers 200 for as long as the process is running and takes no dependencies.
+func RegisterHealthEndpointsWithReadiness(mux *http.ServeMux, serviceName string, startTime time.Time, health, readiness func() []DependencyCheck) {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		depResults := deps()
-		checks := make(map[string]interface{}, len(depResults))
+		checks, ok := evaluate(health)
+
 		status := "healthy"
-		for _, d := range depResults {
-			checks[d.Name] = d.OK
-			if !d.OK {
-				status = "unhealthy"
-			}
+		if !ok {
+			status = "unhealthy"
 		}
 
 		response := HealthResponse{
@@ -41,29 +57,29 @@ func RegisterHealthEndpoints(mux *http.ServeMux, serviceName string, startTime t
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if status == "unhealthy" {
+		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 		json.NewEncoder(w).Encode(response)
 	})
 
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		depResults := deps()
-		allReady := true
-		for _, d := range depResults {
-			if !d.OK {
-				allReady = false
-				break
-			}
+		checks, ok := evaluate(readiness)
+
+		status := "ready"
+		if !ok {
+			status = "not ready"
 		}
+
 		w.Header().Set("Content-Type", "application/json")
-		if allReady {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
-		} else {
+		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{"status": "not ready"})
+		} else {
+			w.WriteHeader(http.StatusOK)
 		}
+		// Checks travel with the answer: "not ready" on its own says nothing about which
+		// dependency is at fault.
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": status, "checks": checks})
 	})
 
 	mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +87,25 @@ func RegisterHealthEndpoints(mux *http.ServeMux, serviceName string, startTime t
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 	})
+}
+
+// evaluate runs a dependency set and reports the results alongside whether all passed.
+// A nil set is vacuously satisfied.
+func evaluate(deps func() []DependencyCheck) (map[string]interface{}, bool) {
+	if deps == nil {
+		return map[string]interface{}{}, true
+	}
+
+	results := deps()
+	checks := make(map[string]interface{}, len(results))
+	ok := true
+	for _, d := range results {
+		checks[d.Name] = d.OK
+		if !d.OK {
+			ok = false
+		}
+	}
+	return checks, ok
 }
 
 func StartHTTPServer(addr string, handler http.Handler) error {
