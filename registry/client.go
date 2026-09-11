@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +36,21 @@ type Service struct {
 	Status       string            `json:"status"`
 	HeartbeatAt  time.Time         `json:"heartbeat_at"`
 	RegisteredAt time.Time         `json:"registered_at"`
+}
+
+// RegistryTokenHeader — заголовок с общим секретом регистрации в реестре.
+const RegistryTokenHeader = "X-Registry-Token"
+
+// RegistryRegistrationTokenEnv — переменная окружения с этим секретом. Пока она
+// не задана ни на движке, ни у сервиса, регистрация работает как раньше —
+// открыто. Заданная переменная включает проверку на обеих сторонах.
+const RegistryRegistrationTokenEnv = "REGISTRY_REGISTRATION_TOKEN"
+
+// applyRegistryAuth добавляет секрет регистрации, если он задан окружением.
+func applyRegistryAuth(req *http.Request) {
+	if token := strings.TrimSpace(os.Getenv(RegistryRegistrationTokenEnv)); token != "" {
+		req.Header.Set(RegistryTokenHeader, token)
+	}
 }
 
 func NewClient(engineURL, serviceName, serviceType, endpoint string, metadata map[string]string) *Client {
@@ -75,6 +92,7 @@ func (c *Client) Register(ctx context.Context) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	applyRegistryAuth(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -97,6 +115,7 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create heartbeat request: %w", err)
 	}
+	applyRegistryAuth(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -143,6 +162,7 @@ func (c *Client) Unregister(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create unregister request: %w", err)
 	}
+	applyRegistryAuth(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
