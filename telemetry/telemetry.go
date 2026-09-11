@@ -19,7 +19,7 @@ const version = "1.0.0"
 func InitTracing(ctx context.Context, serviceName string) (func(), error) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
-		endpoint = "http://tmpo:4318"
+		endpoint = "http://tempo:4318"
 	}
 
 	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint))
