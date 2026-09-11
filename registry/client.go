@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -58,6 +59,13 @@ func NewClient(engineURL, serviceName, serviceType, endpoint string, metadata ma
 		engineURL: engineURL,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
+			// Секрет регистрации едет пользовательским заголовком, а http.Client
+			// снимает при редиректе только Authorization/WWW-Authenticate/Cookie.
+			// Один 302 на чужой хост — и общий секрет платформы у постороннего,
+			// поэтому редиректы не следуем вовсе: у реестра их не бывает.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		serviceName: serviceName,
 		serviceType: serviceType,
@@ -100,7 +108,9 @@ func (c *Client) Register(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	// 3xx тоже отказ: редиректы мы не следуем (см. CheckRedirect), и молча
+	// считать перенаправление успешной регистрацией нельзя.
+	if resp.StatusCode >= 300 {
 		return fmt.Errorf("registration failed with status: %d", resp.StatusCode)
 	}
 
@@ -109,7 +119,7 @@ func (c *Client) Register(ctx context.Context) error {
 }
 
 func (c *Client) Heartbeat(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1/registry/services/%s/heartbeat", c.engineURL, c.serviceName)
+	url := fmt.Sprintf("%s/api/v1/registry/services/%s/heartbeat", c.engineURL, neturl.PathEscape(c.serviceName))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
@@ -123,9 +133,8 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		log.Printf("Heartbeat failed with status: %d (service may need re-registration)", resp.StatusCode)
-		return nil
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("heartbeat rejected with status %d (service may need re-registration)", resp.StatusCode)
 	}
 
 	return nil
@@ -156,7 +165,7 @@ func (c *Client) Stop() {
 }
 
 func (c *Client) Unregister(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1/registry/services/%s", c.engineURL, c.serviceName)
+	url := fmt.Sprintf("%s/api/v1/registry/services/%s", c.engineURL, neturl.PathEscape(c.serviceName))
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 	if err != nil {
@@ -169,6 +178,10 @@ func (c *Client) Unregister(ctx context.Context) error {
 		return fmt.Errorf("failed to unregister service: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("unregister rejected with status %d", resp.StatusCode)
+	}
 
 	return nil
 }
