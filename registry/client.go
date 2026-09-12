@@ -140,6 +140,13 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	return nil
 }
 
+// StartHeartbeat периодически подтверждает присутствие сервиса в реестре.
+//
+// Отказ heartbeat означает, что записи в реестре нет: движок выкинул сервис по
+// истечении окна устаревания, либо первая регистрация вовсе не прошла (движок
+// мог ещё не слушать HTTP, когда сервис стартовал). Поэтому на любом отказе
+// пробуем зарегистрироваться заново — иначе воркер исправно разбирает команды
+// из NATS, но в каталоге его нет и модельер не предлагает ни одного действия.
 func (c *Client) StartHeartbeat(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -150,7 +157,10 @@ func (c *Client) StartHeartbeat(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 			if err := c.Heartbeat(ctx); err != nil {
-				log.Printf("Heartbeat error: %v", err)
+				log.Printf("Heartbeat error: %v, re-registering", err)
+				if regErr := c.Register(ctx); regErr != nil {
+					log.Printf("Re-registration failed: %v", regErr)
+				}
 			}
 		case <-c.stopCh:
 			return
