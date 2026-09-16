@@ -8,11 +8,11 @@ import (
 )
 
 type HealthResponse struct {
-	Status        string                 `json:"status"`
-	ServiceName   string                 `json:"service_name"`
-	Timestamp     time.Time              `json:"timestamp"`
-	UptimeSeconds int64                  `json:"uptime_seconds"`
-	Checks        map[string]interface{} `json:"checks"`
+	Status        string         `json:"status"`
+	ServiceName   string         `json:"service_name"`
+	Timestamp     time.Time      `json:"timestamp"`
+	UptimeSeconds int64          `json:"uptime_seconds"`
+	Checks        map[string]any `json:"checks"`
 }
 
 type DependencyCheck struct {
@@ -79,7 +79,7 @@ func RegisterHealthEndpointsWithReadiness(mux *http.ServeMux, serviceName string
 		}
 		// Checks travel with the answer: "not ready" on its own says nothing about which
 		// dependency is at fault.
-		json.NewEncoder(w).Encode(map[string]interface{}{"status": status, "checks": checks})
+		json.NewEncoder(w).Encode(map[string]any{"status": status, "checks": checks})
 	})
 
 	mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
@@ -91,13 +91,13 @@ func RegisterHealthEndpointsWithReadiness(mux *http.ServeMux, serviceName string
 
 // evaluate runs a dependency set and reports the results alongside whether all passed.
 // A nil set is vacuously satisfied.
-func evaluate(deps func() []DependencyCheck) (map[string]interface{}, bool) {
+func evaluate(deps func() []DependencyCheck) (map[string]any, bool) {
 	if deps == nil {
-		return map[string]interface{}{}, true
+		return map[string]any{}, true
 	}
 
 	results := deps()
-	checks := make(map[string]interface{}, len(results))
+	checks := make(map[string]any, len(results))
 	ok := true
 	for _, d := range results {
 		checks[d.Name] = d.OK

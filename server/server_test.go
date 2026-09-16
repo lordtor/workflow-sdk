@@ -12,12 +12,12 @@ func deps(checks ...DependencyCheck) func() []DependencyCheck {
 	return func() []DependencyCheck { return checks }
 }
 
-func get(t *testing.T, mux *http.ServeMux, path string) (int, map[string]interface{}) {
+func get(t *testing.T, mux *http.ServeMux, path string) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
-	var body map[string]interface{}
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("%s: decode body %q: %v", path, rec.Body.String(), err)
 	}
@@ -42,7 +42,7 @@ func TestReadinessDependencyDoesNotAffectHealth(t *testing.T) {
 		t.Fatalf("/ready = %d %v, want 503 not ready", code, body)
 	}
 
-	checks, ok := body["checks"].(map[string]interface{})
+	checks, ok := body["checks"].(map[string]any)
 	if !ok {
 		t.Fatalf("/ready body carries no checks: %v", body)
 	}
